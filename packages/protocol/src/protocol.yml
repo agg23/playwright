@@ -1675,8 +1675,6 @@ Page:
         root: ElementHandle?
       returns:
         rootAXNode: AXNode?
-      flags:
-        snapshot: true
 
     pdf:
       parameters:
@@ -1887,8 +1885,6 @@ Frame:
         timeout: number?
       returns:
         snapshot: string
-      flags:
-        snapshot: true
 
     blur:
       parameters:
@@ -1947,8 +1943,6 @@ Frame:
     content:
       returns:
         value: string
-      flags:
-        snapshot: true
 
     dragAndDrop:
       parameters:
@@ -2552,8 +2546,6 @@ ElementHandle:
     boundingBox:
       returns:
         value: Rect?
-      flags:
-        snapshot: true
 
     check:
       parameters:
