@@ -48,3 +48,7 @@
 .copy-value-container:hover .copy-button-container {
   visibility: visible;
 }
+
+.copy-button-container-force {
+  visibility: visible;
+}

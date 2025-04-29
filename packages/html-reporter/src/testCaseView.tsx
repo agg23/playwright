@@ -45,20 +45,19 @@ export const TestCaseView: React.FC<{
   const visibleTestAnnotations = test.annotations.filter(a => !a.type.startsWith('_')) ?? [];
 
   return <>
-    <div className='hbox'>
-      <div className='test-case-path'>{test.path.join(' › ')}</div>
+    <HeaderTitleView title={test.title}>
       <div style={{ flex: 'auto' }}></div>
-      <div className={clsx(!prev && 'hidden')}><Link href={testResultHref({ test: prev }) + filterParam}>« previous</Link></div>
+      <div className={clsx('test-case-switcher-button', !prev && 'hidden')}><Link href={testResultHref({ test: prev }) + filterParam}>« previous</Link></div>
       <div style={{ width: 10 }}></div>
-      <div className={clsx(!next && 'hidden')}><Link href={testResultHref({ test: next }) + filterParam}>next »</Link></div>
-    </div>
-    <HeaderTitleView title={test.title} />
-    <div className='hbox'>
+      <div className={clsx('test-case-switcher-button', !next && 'hidden')}><Link href={testResultHref({ test: next }) + filterParam}>next »</Link></div>
+    </HeaderTitleView>
+    <div className='hbox test-case-metadata'>
       <div className='test-case-location'>
-        <CopyToClipboardContainer value={`${test.location.file}:${test.location.line}`}>
+        <CopyToClipboardContainer value={`${test.location.file}:${test.location.line}`} forceShow={true}>
           {test.location.file}:{test.location.line}
         </CopyToClipboardContainer>
       </div>
+      <div className='test-case-path'>{test.path.length > 0 ? '› ' + test.path.join(' › ') : ''}</div>
       <div style={{ flex: 'auto' }}></div>
       <div className='test-case-duration'>{msToString(test.duration)}</div>
     </div>

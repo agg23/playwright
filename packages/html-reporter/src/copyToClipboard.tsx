@@ -15,11 +15,13 @@
  */
 
 import * as React from 'react';
+import { clsx } from '@web/uiUtils';
 import * as icons from './icons';
 import './copyToClipboard.css';
 
 type CopyToClipboardProps = {
   value: string;
+  forceShow?: boolean;
 };
 
 /**
@@ -49,10 +51,10 @@ type CopyToClipboardContainerProps = CopyToClipboardProps & {
 /**
  * Container for displaying a copy to clipboard button alongside children.
  */
-export const CopyToClipboardContainer: React.FunctionComponent<CopyToClipboardContainerProps> = ({ children, value }) => {
+export const CopyToClipboardContainer: React.FunctionComponent<CopyToClipboardContainerProps> = ({ children, value, forceShow }) => {
   return <span className='copy-value-container'>
     {children}
-    <span className='copy-button-container'>
+    <span className={clsx('copy-button-container', forceShow && 'copy-button-container-force')}>
       <CopyToClipboard value={value} />
     </span>
   </span>;

@@ -19,8 +19,10 @@
 }
 
 .header-title {
-  flex: none;
   padding: 8px;
+}
+
+.header-title-text {
   font-weight: 400;
   font-size: 32px !important;
   line-height: 1.25 !important;

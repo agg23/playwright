@@ -71,6 +71,7 @@ export const TestFilesHeader: React.FC<{
   if (!report)
     return null;
   return <>
+    {report.title && <HeaderTitleView title={report.title} />}
     <div className='mx-1' style={{ display: 'flex', marginTop: 10 }}>
       <div className='test-file-header-info'>
         {!isMetadataEmpty(report.metadata) && <div className='metadata-toggle' role='button' onClick={toggleMetadataVisible} title={metadataVisible ? 'Hide metadata' : 'Show metadata'}>
@@ -84,7 +85,6 @@ export const TestFilesHeader: React.FC<{
       <div data-testid='overall-duration' style={{ color: 'var(--color-fg-subtle)' }}>Total time: {msToString(report.duration ?? 0)}</div>
     </div>
     {metadataVisible && <MetadataView metadata={report.metadata}/>}
-    {report.title && <HeaderTitleView title={report.title} />}
     {!!report.errors.length && <AutoChip header='Errors' dataTestId='report-errors'>
       {report.errors.map((error, index) => <TestErrorView key={'test-report-error-message-' + index} error={error}></TestErrorView>)}
     </AutoChip>}

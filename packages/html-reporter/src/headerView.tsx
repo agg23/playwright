@@ -59,7 +59,8 @@ export const HeaderView: React.FC<{
   </>);
 };
 
-export const HeaderTitleView: React.FC<{ title: string }> = ({ title }) => <div className='header-title'>{title}</div>;
+export const HeaderTitleView: React.FC<React.PropsWithChildren<{ title: string }>> = ({ title, children }) =>
+  <div className='hbox header-title'><div className='header-title-text'>{title}</div>{children}</div>;
 
 const StatsNavView: React.FC<{
   stats: Stats
