@@ -39,6 +39,11 @@ export type AriaSnapshot = {
   elements: Map<string, Element>;
 };
 
+export interface MatchFailure {
+  templateLineNumber?: number;
+  isFromTemplateRegex?: boolean; // True if this failure was due to a regex in the template name/prop
+}
+
 type AriaRef = {
   role: string;
   name: string;
@@ -274,18 +279,23 @@ function normalizeStringChildren(rootA11yNode: AriaNode) {
   visit(rootA11yNode);
 }
 
-function matchesText(text: string, template: AriaRegex | string | undefined): boolean {
+function matchesText(text: string, template: AriaRegex | string | undefined): {
+  match: boolean;
+  isFromTemplateRegex: boolean;
+} {
   if (!template)
-    return true;
+    return { match: true, isFromTemplateRegex: false };
   if (!text)
-    return false;
+    return { match: false, isFromTemplateRegex: false };
   if (typeof template === 'string')
-    return text === template;
-  return !!text.match(new RegExp(template.pattern));
+    return { match: text === template, isFromTemplateRegex: false };
+  return { match: !!text.match(new RegExp(template.pattern)), isFromTemplateRegex: true };
 }
 
-function matchesTextNode(text: string, template: AriaTemplateTextNode) {
-  return matchesText(text, template.text);
+function matchesTextNode(text: string, template: AriaTemplateTextNode): MatchFailure[] {
+  if (matchesText(text, template.text).match)
+    return [];
+  return [{ templateLineNumber: template.lineNumber }];
 }
 
 function matchesName(text: string, template: AriaTemplateRoleNode) {
@@ -297,11 +307,23 @@ export type MatcherReceived = {
   regex: string;
 };
 
-export function matchesAriaTree(rootElement: Element, template: AriaTemplateNode): { matches: AriaNode[], received: MatcherReceived } {
+export function matchesAriaTree(rootElement: Element, template: AriaTemplateNode): { matches: AriaNode[], failures: MatchFailure[], received: MatcherReceived } {
   const snapshot = generateAriaTree(rootElement);
-  const matches = matchesNodeDeep(snapshot.root, template, false, false);
+  // 'isDeepEqual' for the root comparison itself. Children comparison is driven by template.containerMode.
+  // const failures = matchesNode(snapshot.root, template, false);
+  const { matches, failures } = matchesNodeDeep(snapshot.root, template, false, false);
+
+  // let matches: AriaNode[] = [];
+  // if (failures.length === 0) {
+  //   // If there are no mismatches for the whole tree starting from the root,
+  //   // then snapshot.root itself is considered the match.
+  //   matches = [snapshot.root];
+  // }
+  // If mismatches.length > 0, the overall structure doesn't match, so 'matches' remains empty.
+
   return {
     matches,
+    failures,
     received: {
       raw: renderAriaTree(snapshot, { mode: 'raw' }),
       regex: renderAriaTree(snapshot, { mode: 'regex' }),
@@ -315,33 +337,36 @@ export function getAllByAria(rootElement: Element, template: AriaTemplateNode): 
   return matches.map(n => n.element);
 }
 
-function matchesNode(node: AriaNode | string, template: AriaTemplateNode, isDeepEqual: boolean): boolean {
+function matchesNode(node: AriaNode | string, template: AriaTemplateNode, isDeepEqual: boolean): MatchFailure[] {
+  console.log('matchesNode', node, template);
   if (typeof node === 'string' && template.kind === 'text')
-    return matchesTextNode(node, template);
+    return matchesTextNode(node, template).map(f => ({ ...f, isFromTemplateRegex: false }));
 
   if (node === null || typeof node !== 'object' || template.kind !== 'role')
-    return false;
+    return [{ templateLineNumber: template.lineNumber, isFromTemplateRegex: false }];
 
+  const otherDirectFailures: MatchFailure[] = [];
   if (template.role !== 'fragment' && template.role !== node.role)
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
   if (template.checked !== undefined && template.checked !== node.checked)
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
   if (template.disabled !== undefined && template.disabled !== node.disabled)
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
   if (template.expanded !== undefined && template.expanded !== node.expanded)
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
   if (template.level !== undefined && template.level !== node.level)
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
   if (template.pressed !== undefined && template.pressed !== node.pressed)
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
   if (template.selected !== undefined && template.selected !== node.selected)
-    return false;
-  if (!matchesName(node.name, template))
-    return false;
-  if (!matchesText(node.props.url, template.props?.url))
-    return false;
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
+  const doesMatchName = matchesName(node.name, template);
+  if (!doesMatchName.match)
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: doesMatchName.isFromTemplateRegex });
+  const doesMatchUrl = matchesText(node.props.url, template.props?.url);
+  if (!doesMatchUrl.match)
+    otherDirectFailures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: doesMatchUrl.isFromTemplateRegex });
 
-  // Proceed based on the container mode.
   if (template.containerMode === 'contain')
     return containsList(node.children || [], template.children || []);
   if (template.containerMode === 'equal')
@@ -349,55 +374,169 @@ function matchesNode(node: AriaNode | string, template: AriaTemplateNode, isDeep
   if (template.containerMode === 'deep-equal' || isDeepEqual)
     return listEqual(node.children || [], template.children || [], true);
   return containsList(node.children || [], template.children || []);
+  // const actualChildren = node.children || [];
+  // const templateChildren = template.children || [];
+  // // Child comparison logic: default to listEqual for this prioritized approach.
+  // // The containerMode would need careful integration if it's to override this prioritization.
+  // const useDeepEqualForChildren = template.containerMode === 'deep-equal' || isChildrenDeepEqual;
+  // // listEqual calls this matchesNode, so isFromTemplateRegex will propagate up.
+  // const childComparisonFailures = listEqual(actualChildren, templateChildren, useDeepEqualForChildren);
+
+  // // Prioritization Logic:
+  // // 1. If any child returned a failure marked as 'isFromTemplateRegex', that's the single most important failure.
+  // const primaryChildRegexFailure = childComparisonFailures.find(f => f.isFromTemplateRegex);
+  // if (primaryChildRegexFailure)
+  //   return [primaryChildRegexFailure];
+
+  // // 2. If no regex failures from children, but other (non-regex) child failures exist, return the first of those.
+  // if (childComparisonFailures.length > 0) {
+  //   // Ensure the returned failure has isFromTemplateRegex (should be false if not set by a deeper regex)
+  //   const firstChildFailure = childComparisonFailures[0];
+  //   return [{ ...firstChildFailure, isFromTemplateRegex: firstChildFailure.isFromTemplateRegex || false }];
+  // }
+
+  // // 3. If no child failures at all, return the first direct failure of this node (which are non-regex by this point).
+  // if (otherDirectFailures.length > 0) {
+  //   // All otherDirectFailures are already marked with isFromTemplateRegex: false.
+  //   return [otherDirectFailures[0]];
+  // }
+
+  // return []; // Perfect match for this node and its subtree.
 }
 
-function listEqual(children: (AriaNode | string)[], template: AriaTemplateNode[], isDeepEqual: boolean): boolean {
-  if (template.length !== children.length)
-    return false;
-  for (let i = 0; i < template.length; ++i) {
-    if (!matchesNode(children[i], template[i], isDeepEqual))
-      return false;
+// function listEqual(actualChildren: (AriaNode | string)[], templateChildren: AriaTemplateNode[], areChildrenDeepEqual: boolean): MatchFailure[] {
+//   const len = Math.min(actualChildren.length, templateChildren.length);
+
+//   for (let i = 0; i < len; ++i) {
+//     const itemMismatches = matchesNode(actualChildren[i], templateChildren[i], areChildrenDeepEqual);
+//     const primaryRegexFailureInChild = itemMismatches.find(f => f.isFromTemplateRegex);
+//     if (primaryRegexFailureInChild)
+//       return [primaryRegexFailureInChild]; // This regex failure takes precedence.
+//     if (itemMismatches.length > 0) {
+//       // If no regex failure, but other mismatches, return the first of those.
+//       // Ensure isFromTemplateRegex is consistently set (should be false here).
+//       const firstMismatch = itemMismatches[0];
+//       return [{ ...firstMismatch, isFromTemplateRegex: false }];
+//     }
+//   }
+
+//   // If common part matched perfectly, check for length differences.
+//   if (templateChildren.length > actualChildren.length) // Template expected more children
+//     return [{ templateLineNumber: templateChildren[len].lineNumber, isFromTemplateRegex: false }];
+//   if (actualChildren.length > templateChildren.length) { // Actual has extra children
+//     // If template had items, blame the last one for "extras after this".
+//     // If template was empty, this implies a mismatch for the parent node (expecting no children).
+//     // matchesNode should handle this by returning its own line if its otherDirectFailures was empty.
+//     // For listEqual to contribute a failure here, associate with last template line if possible.
+//     if (templateChildren.length > 0)
+//       return [{ templateLineNumber: templateChildren[templateChildren.length - 1].lineNumber, isFromTemplateRegex: false }];
+//     // If templateChildren was empty and actualChildren is not, listEqual returns []
+//     // allowing matchesNode to decide if the parent node itself is the failure.
+//   }
+
+//   return []; // Perfect match for this list segment.
+// }
+
+// function listEqual(children: (AriaNode | string)[], template: AriaTemplateNode[], isDeepEqual: boolean): boolean {
+//   if (template.length !== children.length)
+//     return false;
+//   for (let i = 0; i < template.length; ++i) {
+//     if (!matchesNode(children[i], template[i], isDeepEqual))
+//       return false;
+//   }
+//   return true;
+// }
+
+function listEqual(children: (AriaNode | string)[], template: AriaTemplateNode[], isDeepEqual: boolean): MatchFailure[] {
+  const length = Math.min(children.length, template.length);
+
+  const failures: MatchFailure[] = [];
+
+  for (let i = 0; i < length; ++i)
+    failures.push(...matchesNode(children[i], template[i], isDeepEqual));
+  for (let i = length; i < template.length; ++i) {
+    // Mark any extra template items as mismatches
+    failures.push({ templateLineNumber: template[i].lineNumber, isFromTemplateRegex: false });
   }
-  return true;
+
+  return failures;
 }
 
-function containsList(children: (AriaNode | string)[], template: AriaTemplateNode[]): boolean {
-  if (template.length > children.length)
-    return false;
+// TODO: Finish
+function containsList(children: (AriaNode | string)[], template: AriaTemplateNode[]): MatchFailure[] {
+  console.log('containsList', children, template);
+  if (template.length > children.length) {
+    console.log('Template is longer than children', template, children);
+    return [{ templateLineNumber: template[children.length].lineNumber, isFromTemplateRegex: false }];
+  }
   const cc = children.slice();
   const tt = template.slice();
+  const allFailures: MatchFailure[] = [];
   for (const t of tt) {
     let c = cc.shift();
+    const localFailures: MatchFailure[] = [];
     while (c) {
-      if (matchesNode(c, t, false))
+      const failures = matchesNode(c, t, false);
+      if (failures.length === 0)
         break;
       c = cc.shift();
+      // TODO: This isn't right
+      localFailures.push(...failures);
+      console.log('localFailures', localFailures);
     }
-    if (!c)
-      return false;
+    if (!c) {
+      // allFailures.push(...localFailures, { templateLineNumber: t.lineNumber, isFromTemplateRegex: false });
+      // console.log('Local error', t.lineNumber);
+      return [...localFailures, { templateLineNumber: t.lineNumber, isFromTemplateRegex: false }];
+    }
   }
-  return true;
+  console.log('allFailures', allFailures);
+  return [];
 }
 
-function matchesNodeDeep(root: AriaNode, template: AriaTemplateNode, collectAll: boolean, isDeepEqual: boolean): AriaNode[] {
+// function containsList(children: (AriaNode | string)[], template: AriaTemplateNode[]): MatchFailure[] {
+//   // if (template.length > children.length)
+//   //   return [{ templateLineNumber: 1, isFromTemplateRegex: false }];
+//   const cc = children.slice();
+//   const tt = template.slice();
+//   for (const t of tt) {
+//     let c = cc.shift();
+//     while (c) {
+//       if (matchesNode(c, t, false).length === 0)
+//         break;
+//       c = cc.shift();
+//     }
+//     if (!c)
+//       return [{ templateLineNumber: t.lineNumber, isFromTemplateRegex: false }];
+//   }
+//   return [];
+// }
+
+function matchesNodeDeep(root: AriaNode, template: AriaTemplateNode, collectAll: boolean, isDeepEqual: boolean): { matches: AriaNode[], failures: MatchFailure[] } {
   const results: AriaNode[] = [];
+  const failures: MatchFailure[] = [];
   const visit = (node: AriaNode | string, parent: AriaNode | null): boolean => {
-    if (matchesNode(node, template, isDeepEqual)) {
+    const localFailures = matchesNode(node, template, isDeepEqual);
+    if (localFailures.length === 0) {
       const result = typeof node === 'string' ? parent : node;
       if (result)
         results.push(result);
       return !collectAll;
     }
-    if (typeof node === 'string')
+    failures.push(...localFailures);
+    if (typeof node === 'string') {
+      failures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
       return false;
+    }
     for (const child of node.children || []) {
       if (visit(child, node))
         return true;
     }
+    failures.push({ templateLineNumber: template.lineNumber, isFromTemplateRegex: false });
     return false;
   };
   visit(root, null);
-  return results;
+  return { matches: results, failures };
 }
 
 export function renderAriaTree(ariaSnapshot: AriaSnapshot, options?: { mode?: 'raw' | 'regex', forAI?: boolean }): string {

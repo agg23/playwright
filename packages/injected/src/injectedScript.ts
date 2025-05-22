@@ -1444,7 +1444,10 @@ export class InjectedScript {
       if (expression === 'to.match.aria') {
         const result = matchesAriaTree(element, options.expectedValue);
         return {
-          received: result.received,
+          received: {
+            ...result.received,
+            failures: result.failures
+          },
           matches: !!result.matches.length,
         };
       }

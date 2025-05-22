@@ -29,7 +29,7 @@ import { currentTestInfo } from '../common/globals';
 import type { MatcherResult } from './matcherHint';
 import type { LocatorEx } from './matchers';
 import type { ExpectMatcherState } from '../../types/test';
-import type { MatcherReceived } from '@injected/ariaSnapshot';
+import type { MatcherReceived, MatchFailure } from '@injected/ariaSnapshot';
 
 type ToMatchAriaSnapshotExpected = {
   name?: string;
@@ -96,7 +96,7 @@ export async function toMatchAriaSnapshot(
 
   expected = unshift(expected);
   const { matches: pass, received, log, timedOut } = await receiver._expect('to.match.aria', { expectedValue: expected, isNot: this.isNot, timeout });
-  const typedReceived = received as MatcherReceived | typeof kNoElementsFoundError;
+  const typedReceived = received as (MatcherReceived & {failures: MatchFailure[]}) | typeof kNoElementsFoundError;
 
   const messagePrefix = matcherHint(this, receiver, matcherName, 'locator', undefined, matcherOptions, timedOut ? timeout : undefined);
   const notFound = typedReceived === kNoElementsFoundError;
@@ -109,48 +109,88 @@ export async function toMatchAriaSnapshot(
     };
   }
 
-  const expectedLines = expected.split('\n');
   const actualLines = typedReceived.raw.split('\n');
+  const expectedLines = expected.split('\n');
+
+  const uniqueLineNumbersToMark = new Set(
+      typedReceived.failures
+          .filter(f => f.templateLineNumber !== undefined && f.templateLineNumber > 0)
+          .map(f => f.templateLineNumber!)
+  );
+
+  console.log('uniqueLineNumbersToMark', uniqueLineNumbersToMark);
+
+  // The `received` object from `_expect` for this matcher will have a `failures` field
+  // if the underlying `matchesAriaTree` (injected script) returned mismatches.
+  // Note: `typedReceived` cannot be `kNoElementsFoundError` here due to the `notFound` check above.
+  if (!pass && typedReceived.failures && typedReceived.failures.length > 0) {
+    // const newExpectedLines = [...expectedLines];
+
+    // Filter out failures without a lineNumber and then get unique line numbers to mark.
+
+    // for (const lineNumber of uniqueLineNumbersToMark) {
+    //   if (lineNumber <= newExpectedLines.length) {
+    //     // Line numbers are 1-based, array indices are 0-based
+    //     const lineIndex = lineNumber - 1;
+    //     // Add a simple marker. More sophisticated highlighting can be done by printDiffOrStringify if it supports it.
+    //     newExpectedLines[lineIndex] = `${newExpectedLines[lineIndex]}    <-- MISMATCH`;
+    //   }
+    // }
+    // expectedLines = newExpectedLines;
+    // // Update the 'expected' string that will be used for diffing
+    // expected = expectedLines.join('\n');
+
+    // const expectedProps = extractProperties(expectedLine);
+    // const actualProps = extractProperties(actualLine);
+    // const actualPropsMap = new Map(actualProps.map(({ key, value }) => [key, value]));
+
+    // let propsMatch = true;
+
+    // for (const { key, value } of expectedProps) {
+    //   const actualValue = actualPropsMap.get(key);
+    //   if (!actualValue || actualValue !== value) {
+    //     propsMatch = false;
+    //     break;
+    //   }
+    // }
+
+    // if (propsMatch) {
+    //   actualLines[i] = actualLines[i].split(ARIA_PROPERTY_REGEX)[0].trimEnd();
+    //   if (expectedProps.length > 0) {
+    //     const actualPropsString = expectedProps.map(({ key, value }) => `[${key}${value ? '=' + value : ''}]`).join(' ');
+    //     actualLines[i] += ` ${actualPropsString}`;
+    //   }
+    // }
+  }
 
   const length = Math.min(actualLines.length, expectedLines.length);
 
+  // for (let i = 0; i < length; i++) {
+  //   const expectedLine = expectedLines[i];
+  //   const actualLine = actualLines[i];
+
+  //   const expectedMatch = expectedLine.match(/\/(.*)\//);
+  //   if (expectedMatch && expectedMatch.index !== undefined) {
+  //     try {
+  //       const regex = new RegExp(expectedMatch[1]);
+
+  //       const actualMatch = actualLine.match(regex);
+  //       if (actualMatch)
+  //         expectedLines[i] = expectedLine.slice(0, expectedMatch.index) + actualMatch[0] + expectedLine.slice(expectedMatch.index + expectedMatch[0].length);
+  //     } catch (e) {
+  //       // Skip invalid regex
+  //     }
+  //   }
+
   for (let i = 0; i < length; i++) {
-    const expectedLine = expectedLines[i];
-    const actualLine = actualLines[i];
-
-    const expectedMatch = expectedLine.match(/\/(.*)\//);
-    if (expectedMatch && expectedMatch.index !== undefined) {
-      try {
-        const regex = new RegExp(expectedMatch[1]);
-
-        const actualMatch = actualLine.match(regex);
-        if (actualMatch)
-          expectedLines[i] = expectedLine.slice(0, expectedMatch.index) + actualMatch[0] + expectedLine.slice(expectedMatch.index + expectedMatch[0].length);
-      } catch (e) {
-        // Skip invalid regex
-      }
-    }
-
-    const expectedProps = extractProperties(expectedLine);
-    const actualProps = extractProperties(actualLine);
-    const actualPropsMap = new Map(actualProps.map(({ key, value }) => [key, value]));
-
-    let propsMatch = true;
-
-    for (const { key, value } of expectedProps) {
-      const actualValue = actualPropsMap.get(key);
-      if (!actualValue || actualValue !== value) {
-        propsMatch = false;
-        break;
-      }
-    }
-
-    if (propsMatch) {
-      actualLines[i] = actualLines[i].split(ARIA_PROPERTY_REGEX)[0].trimEnd();
-      if (expectedProps.length > 0) {
-        const actualPropsString = expectedProps.map(({ key, value }) => `[${key}${value ? '=' + value : ''}]`).join(' ');
-        actualLines[i] += ` ${actualPropsString}`;
-      }
+    if (!uniqueLineNumbersToMark.has(i + 1)) {
+      console.log(`Copying "${actualLines[i]}" to ${expectedLines[i]}`);
+      expectedLines[i] = actualLines[i];
+      // actualLines[i] = expectedLines[i];
+    } else {
+      console.log(`Skipping "${actualLines[i]}" to ${expectedLines[i]}`);
+      // expectedLines[i] = actualLines[i];
+      // actualLines[i] = expectedLines[i];
     }
   }
 
