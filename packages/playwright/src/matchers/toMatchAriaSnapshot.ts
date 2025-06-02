@@ -114,7 +114,8 @@ export async function toMatchAriaSnapshot(
       const labelExpected = `Expected`;
       if (notFound)
         return messagePrefix + `${labelExpected}: ${this.utils.printExpected(expected)}\nReceived: ${receivedText}` + callLogText(log);
-      return messagePrefix + this.utils.printDiffOrStringify(expected, receivedText, labelExpected, 'Received', false) + callLogText(log);
+      const diffReceived = typedReceived.diffTarget || receivedText;
+      return messagePrefix + this.utils.printDiffOrStringify(expected, diffReceived, labelExpected, 'Received', false) + callLogText(log);
     }
   };
 

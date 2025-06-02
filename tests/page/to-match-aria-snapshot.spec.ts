@@ -417,13 +417,12 @@ test('expected formatter', async ({ page }) => {
   expect(stripAnsi(error.message)).toContain(`
 Locator: locator('body')
 - Expected  - 2
-+ Received  + 3
++ Received  + 2
 
 - - heading "todos"
++ - heading "todos" [level=1]
 - - textbox "Wrong text"
-+ - banner:
-+   - heading "todos" [level=1]
-+   - textbox "What needs to be done?"`);
++ - textbox "What needs to be done?"`);
 });
 
 test('should unpack escaped names', async ({ page }) => {
@@ -790,4 +789,178 @@ test('should allow restoring contain mode inside deep-equal', async ({ page }) =
           - /children: contain
           - listitem: 1.1
   `);
+});
+
+test('improved diff for subtree matching', async ({ page }) => {
+  // Test that demonstrates improved diff showing best matching subtree
+  // instead of full tree with misaligned structure
+  await page.setContent(`
+    <ul>
+      <li>Value1</li>
+      <li>Value 2</li>
+    </ul>
+  `);
+
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - listitem: Value1
+    - listitem: Missing
+  `, { timeout: 1000 }).catch(e => e);
+
+  // With the improved diff, we should see a targeted comparison
+  // focusing on the best matching subtree rather than the entire tree
+  expect(stripAnsi(error.message)).toContain(`
+  - listitem: Value1
+- - listitem: Missing
++ - listitem: Value 2`);
+});
+
+test('improved diff handles regex patterns correctly', async ({ page }) => {
+  // Test that regex patterns in templates are shown properly in diffs
+  // instead of being treated as literal strings
+  await page.setContent(`<h1>Issues 42</h1>`);
+
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - heading /Issues \\d+/
+    - button "Click me"
+  `, { timeout: 1000 }).catch(e => e);
+
+  // The improved diff should show the regex pattern properly in the template
+  // and the actual matched value, providing much better clarity than character-by-character diff
+  expect(stripAnsi(error.message)).toContain(`
+- - heading /Issues \\d+/
+- - button "Click me"
++ - heading "Issues 42" [level=1]`);
+});
+
+test('improved diff matching', async ({ page }) => {
+  await page.setContent(`
+    <ul>
+      <li>
+        <ul>
+          <li>1.1</li>
+          <li>1.2</li>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - listitem: 1.1
+    - listitem: /foo/
+  `, { timeout: 1000 }).catch(e => e);
+
+  expect(stripAnsi(error.message)).toContain(`
+- - listitem: 1.1
++ - listitem: \"1.1\"
+- - listitem: /foo/
++ - listitem: \"1.2\"`);
+});
+
+test('improved diff matching2', async ({ page }) => {
+  await page.setContent(`
+    <ul>
+      <li>
+        <ul>
+          <li>1.1</li>
+          <li>1.2</li>
+          <li>1.3</li>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - listitem: 1.1
+    - listitem: /foo/
+    - listitem: 1.3
+  `, { timeout: 1000 }).catch(e => e);
+
+  expect(stripAnsi(error.message)).toContain(`
+- - listitem: 1.1
++ - listitem: \"1.1\"
+- - listitem: /foo/
++ - listitem: \"1.2\"
+- - listitem: 1.3
++ - listitem: \"1.3\"`);
+});
+
+test('improved diff nested', async ({ page }) => {
+  await page.setContent(`
+    <ul>
+      <li>
+        <ul>
+          <li>1.1</li>
+          <li>1.2</li>
+          <ul>
+            <li>1.1</li>
+            <li>1.4</li>
+          </ul>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  let error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - listitem: 1.1
+    - listitem: 1.3
+  `, { timeout: 1000 }).catch(e => e);
+
+  expect(stripAnsi(error.message)).toContain(`
+- - listitem: 1.1
++ - listitem: \"1.1\"
+- - listitem: 1.3
++ - listitem: \"1.4\"`);
+
+  await page.setContent(`
+    <ul>
+      <li>
+        <ul>
+          <li>1.1a</li>
+          <li>1.2abc</li>
+          <ul>
+            <li>1.1a</li>
+            <li>1.4def</li>
+          </ul>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - listitem: 1.1a
+    - listitem: 1.3abc
+  `, { timeout: 1000 }).catch(e => e);
+
+  expect(stripAnsi(error.message)).toContain(`
+  - listitem: 1.1a
+- - listitem: 1.3abc
++ - listitem: 1.2abc`);
+});
+
+test('improved diff order', async ({ page }) => {
+  await page.setContent(`
+    <ul>
+      <li>
+        <ul>
+          <li>1.1</li>
+          <li>1.2</li>
+          <li>1.3</li>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - listitem: 1.1
+    - listitem: 1.3
+    - listitem: 1.2
+  `, { timeout: 1000 }).catch(e => e);
+
+  expect(stripAnsi(error.message)).toContain(`
+- - listitem: 1.1
++ - listitem: \"1.1\"
+- - listitem: 1.3
++ - listitem: \"1.2\"
+- - listitem: 1.2
++ - listitem: \"1.3\"`);
 });

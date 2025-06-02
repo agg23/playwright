@@ -45,6 +45,18 @@ type AriaRef = {
   ref: string;
 };
 
+const STRING_SIMILARITY_MAX_SCORE = 400;
+const ROLE_MATCH_SCORE = 500;
+const ALL_FIELDS_MATCH_SCORE = 500;
+const FIELD_MATCH_SCORE = 100;
+const NO_CHILDREN_PENALTY = -50;
+const INDEX_MATCH_BONUS_SCORE = 200;
+const INDEX_MISMATCH_PENALTY = -50;
+const DEPTH_BONUS_SCORE = 20;
+const COUNT_MATCH_SCORE = 300;
+const EXACT_MATCH_SCORE = 1000;
+const NO_MATCH_SCORE = -200;
+
 let lastRef = 0;
 
 export function generateAriaTree(rootElement: Element, options?: { forAI?: boolean, refPrefix?: string }): AriaSnapshot {
@@ -295,16 +307,43 @@ function matchesName(text: string, template: AriaTemplateRoleNode) {
 export type MatcherReceived = {
   raw: string;
   regex: string;
+  diffTarget?: string;
 };
 
 export function matchesAriaTree(rootElement: Element, template: AriaTemplateNode): { matches: AriaNode[], received: MatcherReceived } {
   const snapshot = generateAriaTree(rootElement);
   const matches = matchesNodeDeep(snapshot.root, template, false, false);
+
+  // If no matches found, find the best matching subtree for better diff
+  let diffTarget: string | undefined;
+  if (matches.length === 0) {
+    const bestMatch = findBestStructuralMatch(snapshot.root, template);
+    if (bestMatch) {
+      let root = bestMatch;
+      // Wrap fragments in a fake fragment node to prevent rendering parent YAML unnecessarily
+      if (template.kind === 'role' && template.role === 'fragment') {
+        const bestSubsequence = findBestSubsequence(bestMatch.children, template.children ?? []);
+        root = {
+          role: 'fragment',
+          name: '',
+          children: bestSubsequence,
+          element: bestMatch.element,
+          box: bestMatch.box,
+          receivesPointerEvents: bestMatch.receivesPointerEvents,
+          props: {}
+        };
+      }
+
+      diffTarget = renderAriaTree({ root, elements: new Map() }, { mode: 'raw' });
+    }
+  }
+
   return {
     matches,
     received: {
       raw: renderAriaTree(snapshot, { mode: 'raw' }),
       regex: renderAriaTree(snapshot, { mode: 'regex' }),
+      diffTarget,
     }
   };
 }
@@ -324,17 +363,7 @@ function matchesNode(node: AriaNode | string, template: AriaTemplateNode, isDeep
 
   if (template.role !== 'fragment' && template.role !== node.role)
     return false;
-  if (template.checked !== undefined && template.checked !== node.checked)
-    return false;
-  if (template.disabled !== undefined && template.disabled !== node.disabled)
-    return false;
-  if (template.expanded !== undefined && template.expanded !== node.expanded)
-    return false;
-  if (template.level !== undefined && template.level !== node.level)
-    return false;
-  if (template.pressed !== undefined && template.pressed !== node.pressed)
-    return false;
-  if (template.selected !== undefined && template.selected !== node.selected)
+  if (!matchNodeFields(node, template, true).isMatch)
     return false;
   if (!matchesName(node.name, template))
     return false;
@@ -349,6 +378,27 @@ function matchesNode(node: AriaNode | string, template: AriaTemplateNode, isDeep
   if (template.containerMode === 'deep-equal' || isDeepEqual)
     return listEqual(node.children || [], template.children || [], true);
   return containsList(node.children || [], template.children || []);
+}
+
+function matchNodeFields(node: AriaNode, template: AriaTemplateRoleNode, fastFail: boolean): { isMatch: boolean, score: number } {
+  const fields: Array<keyof AriaProps> = ['checked', 'disabled', 'expanded', 'level', 'pressed', 'selected'];
+
+  let score = 0;
+  let isMatch = true;
+
+  for (const field of fields) {
+    if (template[field] !== undefined) {
+      if (node[field] !== template[field]) {
+        if (fastFail)
+          return { isMatch: false, score };
+        isMatch = false;
+      } else {
+        score += FIELD_MATCH_SCORE;
+      }
+    }
+  }
+
+  return { isMatch, score };
 }
 
 function listEqual(children: (AriaNode | string)[], template: AriaTemplateNode[], isDeepEqual: boolean): boolean {
@@ -377,6 +427,131 @@ function containsList(children: (AriaNode | string)[], template: AriaTemplateNod
       return false;
   }
   return true;
+}
+function scoreStringSimilarity(actual: string, expected: string): number {
+  if (!actual || !expected)
+    return 0;
+  const commonLength = longestCommonSubstring(actual, expected).length;
+  const maxLength = Math.max(actual.length, expected.length);
+  return maxLength > 0 ? Math.floor((commonLength / maxLength) * STRING_SIMILARITY_MAX_SCORE) : NO_MATCH_SCORE;
+}
+
+function scoreNodeMatch(node: AriaNode | string, template: AriaTemplateNode): number {
+  if (typeof node === 'string' && template.kind === 'text') {
+    if (matchesTextNode(node, template))
+      return EXACT_MATCH_SCORE;
+    return typeof template.text === 'string' ? scoreStringSimilarity(node, template.text) : NO_MATCH_SCORE;
+  }
+
+  if (typeof node !== 'object' || !node || template.kind !== 'role')
+    return NO_MATCH_SCORE;
+
+  let score = 0;
+  if (node.role === template.role)
+    score += ROLE_MATCH_SCORE;
+
+  if (template.name) {
+    if (matchesName(node.name, template))
+      score += STRING_SIMILARITY_MAX_SCORE;
+    else if (typeof template.name === 'string')
+      score += scoreStringSimilarity(node.name, template.name);
+  }
+
+  const fieldsMatch = matchNodeFields(node, template, false);
+  score += fieldsMatch.score + (fieldsMatch.isMatch ? ALL_FIELDS_MATCH_SCORE : 0);
+
+  if (matchesText(node.props.url, template.props?.url))
+    score += FIELD_MATCH_SCORE;
+  score += scoreChildrenMatch(node.children || [], template.children || []);
+
+  return score;
+}
+
+function findBestChildrenMatches(children: (AriaNode | string)[], templateChildren: AriaTemplateNode[], includePositionBonus: boolean): { score: number, matchIndexes: number[] } {
+  if (templateChildren.length === 0)
+    return { score: 0, matchIndexes: [] };
+  if (children.length === 0)
+    return { score: templateChildren.length * NO_CHILDREN_PENALTY, matchIndexes: [] };
+
+  const usedChildrenIndexes = new Set<number>();
+  let totalScore = 0;
+  let matchedCount = 0;
+  const matchIndexes: number[] = [];
+
+  for (let j = 0; j < templateChildren.length; j++) {
+    let bestScore = -Infinity;
+    let bestIndex = -1;
+
+    for (let i = 0; i < children.length; i++) {
+      if (usedChildrenIndexes.has(i))
+        continue;
+
+      const nodeScore = scoreNodeMatch(children[i], templateChildren[j]);
+      const positionBonus = includePositionBonus && i === j ? INDEX_MATCH_BONUS_SCORE : 0;
+      const score = nodeScore + positionBonus;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex >= 0 && bestScore > 0) {
+      usedChildrenIndexes.add(bestIndex);
+      totalScore += bestScore;
+      matchedCount++;
+      matchIndexes.push(bestIndex);
+    } else if (includePositionBonus) {
+      // The next template node sequentially is a poor match for the actual node
+      totalScore -= INDEX_MISMATCH_PENALTY;
+    }
+  }
+
+  if (includePositionBonus && matchedCount === templateChildren.length)
+    totalScore += COUNT_MATCH_SCORE;
+
+  return { score: totalScore, matchIndexes };
+}
+
+function scoreChildrenMatch(children: (AriaNode | string)[], templateChildren: AriaTemplateNode[]): number {
+  return findBestChildrenMatches(children, templateChildren, true).score;
+}
+
+function findBestSubsequence(children: (AriaNode | string)[], templateChildren: AriaTemplateNode[]): (AriaNode | string)[] {
+  if (templateChildren.length === 0 || children.length === 0)
+    return [];
+  const result = findBestChildrenMatches(children, templateChildren, false);
+  // Preserve the order of children
+  return result.matchIndexes.sort((a, b) => a - b).map(i => children[i]);
+}
+
+function findBestStructuralMatch(root: AriaNode, template: AriaTemplateNode): AriaNode | undefined {
+  let bestMatch: AriaNode | undefined = undefined;
+  let bestScore = -Infinity;
+
+  function traverse(node: AriaNode, depth: number): void {
+    let baseScore: number;
+    if (template.kind === 'role' && template.role === 'fragment' && template.children && template.children.length > 1)
+      baseScore = scoreChildrenMatch(node.children || [], template.children);
+    else
+      baseScore = scoreNodeMatch(node, template);
+
+    // Slightly prefer deeper matches
+    const score = baseScore + (depth * DEPTH_BONUS_SCORE);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = node;
+    }
+
+    for (const child of node.children) {
+      if (typeof child !== 'string')
+        traverse(child, depth + 1);
+    }
+  }
+
+  traverse(root, 0);
+  return bestMatch;
 }
 
 function matchesNodeDeep(root: AriaNode, template: AriaTemplateNode, collectAll: boolean, isDeepEqual: boolean): AriaNode[] {
