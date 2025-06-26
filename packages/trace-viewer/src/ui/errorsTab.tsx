@@ -18,7 +18,7 @@ import { ErrorMessage } from '@web/components/errorMessage';
 import * as React from 'react';
 import type * as modelUtil from './modelUtil';
 import { PlaceholderPanel } from './placeholderPanel';
-import { renderAction } from './actionList';
+import { ActionView } from './actionList';
 import type { Language } from '@isomorphic/locatorGenerators';
 import { CopyToClipboardTextButton } from './copyToClipboard';
 import { useAsyncMemo } from '@web/uiUtils';
@@ -73,7 +73,7 @@ function ErrorView({ message, error, sdkLanguage, revealInSource }: { message: s
       color: 'var(--vscode-errorForeground)',
       flex: 0,
     }}>
-      {error.action && renderAction(error.action, { sdkLanguage })}
+      {error.action && <ActionView action={error.action} options={{ sdkLanguage }} />}
       {location && <div className='action-location'>
         @ <span title={longLocation} onClick={() => revealInSource(error)}>{location}</span>
       </div>}

@@ -137,6 +137,8 @@ export const Workbench: React.FunctionComponent<{
       setIsInspectingState(false);
   }, [setSelectedPropertiesTab]);
 
+  const revealConsole = React.useCallback(() => selectPropertiesTab('console'), [selectPropertiesTab]);
+
   const setIsInspecting = React.useCallback((value: boolean) => {
     if (!isInspecting && value)
       selectPropertiesTab('inspector');
@@ -169,108 +171,35 @@ export const Workbench: React.FunctionComponent<{
 
   const sdkLanguage = model?.sdkLanguage || 'javascript';
 
-  const inspectorTab: TabbedPaneTabModel = {
+  const inspectorTab = React.useMemo<TabbedPaneTabModel>(() => ({
     id: 'inspector',
     title: 'Locator',
-    render: () => <InspectorTab
+    component: <InspectorTab
       sdkLanguage={sdkLanguage}
       setIsInspecting={setIsInspecting}
       highlightedElement={highlightedElement}
       setHighlightedElement={setHighlightedElement} />,
-  };
-  const callTab: TabbedPaneTabModel = {
+  }), [sdkLanguage, setIsInspecting, highlightedElement, setHighlightedElement]);
+
+  const callTab = React.useMemo<TabbedPaneTabModel>(() => ({
     id: 'call',
     title: 'Call',
-    render: () => <CallTab action={activeAction} startTimeOffset={model?.startTime ?? 0} sdkLanguage={sdkLanguage} />
-  };
-  const logTab: TabbedPaneTabModel = {
+    component: <CallTab action={activeAction} startTimeOffset={model?.startTime ?? 0} sdkLanguage={sdkLanguage} />
+  }), [activeAction, model, sdkLanguage]);
+
+  const logTab = React.useMemo<TabbedPaneTabModel>(() => ({
     id: 'log',
     title: 'Log',
-    render: () => <LogTab action={activeAction} isLive={isLive} />
-  };
-  const errorsTab: TabbedPaneTabModel = {
-    id: 'errors',
-    title: 'Errors',
-    errorCount: errorsModel.errors.size,
-    render: () => <ErrorsTab errorsModel={errorsModel} model={model} testRunMetadata={testRunMetadata} sdkLanguage={sdkLanguage} revealInSource={error => {
-      if (error.action)
-        setSelectedAction(error.action);
-      else
-        setRevealedError(error);
-      selectPropertiesTab('source');
-    }} wallTime={model?.wallTime ?? 0} />
-  };
+    component: <LogTab action={activeAction} isLive={isLive} />
+  }), [activeAction, isLive]);
 
-  // Fallback location w/o action stands for file / test.
-  // Render error count on Source tab for that case.
-  let fallbackSourceErrorCount: number | undefined = undefined;
-  if (!selectedAction && fallbackLocation)
-    fallbackSourceErrorCount = fallbackLocation.source?.errors.length;
-
-  const sourceTab: TabbedPaneTabModel = {
-    id: 'source',
-    title: 'Source',
-    errorCount: fallbackSourceErrorCount,
-    render: () => <SourceTab
-      stack={revealedStack}
-      sources={sources}
-      rootDir={rootDir}
-      stackFrameLocation={sidebarLocation === 'bottom' ? 'right' : 'bottom'}
-      fallbackLocation={fallbackLocation}
-      onOpenExternally={onOpenExternally}
-    />
-  };
-  const consoleTab: TabbedPaneTabModel = {
-    id: 'console',
-    title: 'Console',
-    count: consoleModel.entries.length,
-    render: () => <ConsoleTab
-      consoleModel={consoleModel}
-      boundaries={boundaries}
-      selectedTime={selectedTime}
-      onAccepted={m => setSelectedTime({ minimum: m.timestamp, maximum: m.timestamp })}
-      onEntryHovered={setHighlightedConsoleMessage}
-    />
-  };
-  const networkTab: TabbedPaneTabModel = {
-    id: 'network',
-    title: 'Network',
-    count: networkModel.resources.length,
-    render: () => <NetworkTab boundaries={boundaries} networkModel={networkModel} onEntryHovered={setHighlightedEntry} sdkLanguage={model?.sdkLanguage ?? 'javascript'} />
-  };
-  const attachmentsTab: TabbedPaneTabModel = {
-    id: 'attachments',
-    title: 'Attachments',
-    count: model?.visibleAttachments.length,
-    render: () => <AttachmentsTab model={model} revealedAttachment={revealedAttachment} />
-  };
-
-  const tabs: TabbedPaneTabModel[] = [
-    inspectorTab,
-    callTab,
-    logTab,
-    errorsTab,
-    consoleTab,
-    networkTab,
-    sourceTab,
-    attachmentsTab,
-  ];
-
-  if (annotations !== undefined) {
-    const annotationsTab: TabbedPaneTabModel = {
-      id: 'annotations',
-      title: 'Annotations',
-      count: annotations.length,
-      render: () => <AnnotationsTab annotations={annotations} />
-    };
-    tabs.push(annotationsTab);
-  }
-
-  if (showSourcesFirst) {
-    const sourceTabIndex = tabs.indexOf(sourceTab);
-    tabs.splice(sourceTabIndex, 1);
-    tabs.splice(1, 0, sourceTab);
-  }
+  const revealInSource = React.useCallback((error: modelUtil.ErrorDescription) => {
+    if (error.action)
+      setSelectedAction(error.action);
+    else
+      setRevealedError(error);
+    selectPropertiesTab('source');
+  }, [selectPropertiesTab, setRevealedError, setSelectedAction]);
 
   const { boundaries } = React.useMemo(() => {
     const boundaries = { minimum: model?.startTime || 0, maximum: model?.endTime || 30000 };
@@ -282,6 +211,93 @@ export const Workbench: React.FunctionComponent<{
     boundaries.maximum += (boundaries.maximum - boundaries.minimum) / 20;
     return { boundaries };
   }, [model]);
+
+  const errorsTab = React.useMemo<TabbedPaneTabModel>(() => ({
+    id: 'errors',
+    title: 'Errors',
+    errorCount: errorsModel.errors.size,
+    component: <ErrorsTab errorsModel={errorsModel} model={model} testRunMetadata={testRunMetadata} sdkLanguage={sdkLanguage} revealInSource={revealInSource} wallTime={model?.wallTime ?? 0} />
+  }), [errorsModel, model, testRunMetadata, sdkLanguage, revealInSource]);
+
+  // Fallback location w/o action stands for file / test.
+  // Render error count on Source tab for that case.
+  let fallbackSourceErrorCount: number | undefined = undefined;
+  if (!selectedAction && fallbackLocation)
+    fallbackSourceErrorCount = fallbackLocation.source?.errors.length;
+
+  const sourceTab = React.useMemo<TabbedPaneTabModel>(() => ({
+    id: 'source',
+    title: 'Source',
+    errorCount: fallbackSourceErrorCount,
+    component: <SourceTab
+      stack={revealedStack}
+      sources={sources}
+      rootDir={rootDir}
+      stackFrameLocation={sidebarLocation === 'bottom' ? 'right' : 'bottom'}
+      fallbackLocation={fallbackLocation}
+      onOpenExternally={onOpenExternally}
+    />
+  }), [fallbackSourceErrorCount, revealedStack, sources, rootDir, sidebarLocation, fallbackLocation, onOpenExternally]);
+
+  const onConsoleAccepted = React.useCallback((m: ConsoleEntry) => setSelectedTime({ minimum: m.timestamp, maximum: m.timestamp }), [setSelectedTime]);
+
+  const consoleTab = React.useMemo<TabbedPaneTabModel>(() => ({
+    id: 'console',
+    title: 'Console',
+    count: consoleModel.entries.length,
+    component: <ConsoleTab
+      consoleModel={consoleModel}
+      boundaries={boundaries}
+      selectedTime={selectedTime}
+      onAccepted={onConsoleAccepted}
+      onEntryHovered={setHighlightedConsoleMessage}
+    />
+  }), [consoleModel, boundaries, selectedTime, onConsoleAccepted, setHighlightedConsoleMessage]);
+
+  const networkTab = React.useMemo<TabbedPaneTabModel>(() => ({
+    id: 'network',
+    title: 'Network',
+    count: networkModel.resources.length,
+    component: <NetworkTab boundaries={boundaries} networkModel={networkModel} onEntryHovered={setHighlightedEntry} sdkLanguage={model?.sdkLanguage ?? 'javascript'} />
+  }), [boundaries, networkModel, setHighlightedEntry, model]);
+
+  const attachmentsTab = React.useMemo<TabbedPaneTabModel>(() => ({
+    id: 'attachments',
+    title: 'Attachments',
+    count: model?.visibleAttachments.length,
+    component: <AttachmentsTab model={model} revealedAttachment={revealedAttachment} />
+  }), [model, revealedAttachment]);
+
+  const tabs: TabbedPaneTabModel[] = React.useMemo(() => {
+    const tabs = [
+      inspectorTab,
+      callTab,
+      logTab,
+      errorsTab,
+      consoleTab,
+      networkTab,
+      sourceTab,
+      attachmentsTab,
+    ];
+
+    if (annotations !== undefined) {
+      const annotationsTab = {
+        id: 'annotations',
+        title: 'Annotations',
+        count: annotations.length,
+        component: <AnnotationsTab annotations={annotations} />
+      };
+      tabs.push(annotationsTab);
+    }
+
+    if (showSourcesFirst) {
+      const sourceTabIndex = tabs.indexOf(sourceTab);
+      tabs.splice(sourceTabIndex, 1);
+      tabs.splice(1, 0, sourceTab);
+    }
+
+    return tabs;
+  }, [inspectorTab, callTab, logTab, errorsTab, consoleTab, networkTab, sourceTab, attachmentsTab, annotations, showSourcesFirst]);
 
   let time: number = 0;
   if (!isLive && model && model.endTime >= 0)
@@ -308,7 +324,7 @@ export const Workbench: React.FunctionComponent<{
         onSelected={onActionSelected}
         onHighlighted={setHighlightedAction}
         revealAttachment={revealAttachment}
-        revealConsole={() => selectPropertiesTab('console')}
+        revealConsole={revealConsole}
         isLive={isLive}
       />
     </div>

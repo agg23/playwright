@@ -20,7 +20,7 @@ import * as React from 'react';
 import { useMeasure, upperBound } from '@web/uiUtils';
 import type { PageEntry } from '../types/entries';
 import type { ActionTraceEventInContext, MultiTraceModel } from './modelUtil';
-import { renderAction } from './actionList';
+import { ActionView } from './actionList';
 import type { Language } from '@isomorphic/locatorGenerators';
 
 export type FilmStripPreviewPoint = {
@@ -75,7 +75,7 @@ export const FilmStrip: React.FunctionComponent<{
         top: measure.bottom + 5,
         left: Math.min(previewPoint!.x, measure.width - (previewSize ? previewSize.width : 0) - 10),
       }}>
-        {previewPoint.action && <div className='film-strip-hover-title'>{renderAction(previewPoint.action, previewPoint)}</div>}
+        {previewPoint.action && <div className='film-strip-hover-title'><ActionView action={previewPoint.action} options={{ sdkLanguage: previewPoint.sdkLanguage }} /></div>}
         {previewImage && previewSize && <div style={{ width: previewSize.width, height: previewSize.height }}>
           <img src={`sha1/${previewImage.sha1}`} width={previewSize.width} height={previewSize.height} />
         </div>}

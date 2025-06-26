@@ -73,7 +73,7 @@ export const ActionList: React.FC<ActionListProps> = ({
   }, [setSelectedTime]);
 
   const render = React.useCallback((item: ActionTreeItem) => {
-    return renderAction(item.action!, { sdkLanguage, revealConsole, revealAttachment, isLive, showDuration: true, showBadges: true });
+    return <ActionView action={item.action!} options={{ sdkLanguage, revealConsole, revealAttachment, isLive, showDuration: true, showBadges: true }} />;
   }, [isLive, revealConsole, revealAttachment, sdkLanguage]);
 
   const isVisible = React.useCallback((item: ActionTreeItem) => {
@@ -106,16 +106,16 @@ export const ActionList: React.FC<ActionListProps> = ({
   </div>;
 };
 
-export const renderAction = (
-  action: ActionTraceEvent,
-  options: {
+export const ActionView: React.FC<{
+  action: ActionTraceEvent, options: {
     sdkLanguage?: Language,
     revealConsole?: () => void,
     revealAttachment?(attachment: AfterActionTraceEventAttachment): void,
     isLive?: boolean,
     showDuration?: boolean,
     showBadges?: boolean,
-  }) => {
+  }
+}> = ({ action, options }) => {
   const { sdkLanguage, revealConsole, revealAttachment, isLive, showDuration, showBadges } = options;
   const { errors, warnings } = modelUtil.stats(action);
   const showAttachments = !!action.attachments?.length && !!revealAttachment;
@@ -131,14 +131,25 @@ export const renderAction = (
   else if (!isLive)
     time = '-';
   const { elements, title } = renderTitleForCall(action);
+
+  const onAttachmentsClick = React.useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    revealAttachment!(action.attachments![0]);
+  }, [revealAttachment, action]);
+
+  const onErrorsClick = React.useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    revealConsole?.();
+  }, [revealConsole]);
+
   return <div className='action-title vbox'>
     <div className='hbox'>
       <span className='action-title-method' title={title}>{elements}</span>
       {(showDuration || showBadges || showAttachments || isSkipped) && <div className='spacer'></div>}
-      {showAttachments && <ToolbarButton icon='attach' title='Open Attachment' onClick={() => revealAttachment(action.attachments![0])} />}
+      {showAttachments && <ToolbarButton icon='attach' title='Open Attachment' onClick={onAttachmentsClick} />}
       {showDuration && !isSkipped && <div className='action-duration'>{time || <span className='codicon codicon-loading'></span>}</div>}
       {isSkipped && <span className={clsx('action-skipped', 'codicon', testStatusIcon('skipped'))} title='skipped'></span>}
-      {showBadges && <div className='action-icons' onClick={() => revealConsole?.()}>
+      {showBadges && <div className='action-icons' onClick={onErrorsClick}>
         {!!errors && <div className='action-icon'><span className='codicon codicon-error'></span><span className='action-icon-value'>{errors}</span></div>}
         {!!warnings && <div className='action-icon'><span className='codicon codicon-warning'></span><span className='action-icon-value'>{warnings}</span></div>}
       </div>}
