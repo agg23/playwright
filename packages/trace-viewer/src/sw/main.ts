@@ -17,9 +17,11 @@
 import { splitProgress } from './progress';
 import { unwrapPopoutUrl } from './snapshotRenderer';
 import { SnapshotServer } from './snapshotServer';
-import { TraceModel } from './traceModel';
+import { TraceModel, TraceModelBackend } from './traceModel';
 import { FetchTraceModelBackend, TraceViewerServer, ZipTraceModelBackend } from './traceModelBackends';
 import { TraceVersionError } from './traceModernizer';
+
+type TraceEntry = { limit: number | undefined, traceUrls: Set<string>, traceViewerServer: TraceViewerServer };
 
 // @ts-ignore
 declare const self: ServiceWorkerGlobalScope;
@@ -36,11 +38,9 @@ const scopePath = new URL(self.registration.scope).pathname;
 
 const loadedTraces = new Map<string, { traceModel: TraceModel, snapshotServer: SnapshotServer }>();
 
-const clientIdToTraceUrls = new Map<string, { limit: number | undefined, traceUrls: Set<string>, traceViewerServer: TraceViewerServer }>();
+const clientIdToTraceUrls = new Map<string, TraceEntry>();
 
-async function loadTrace(traceUrl: string, traceFileName: string | null, client: any | undefined, limit: number | undefined, progress: (done: number, total: number) => undefined): Promise<TraceModel> {
-  await gc();
-  const clientId = client?.id ?? '';
+function getTraceData(clientId: string, client: any | undefined, limit: number | undefined): TraceEntry {
   let data = clientIdToTraceUrls.get(clientId);
   if (!data) {
     const clientURL = new URL(client?.url ?? self.registration.scope);
@@ -48,13 +48,20 @@ async function loadTrace(traceUrl: string, traceFileName: string | null, client:
     data = { limit, traceUrls: new Set(), traceViewerServer: new TraceViewerServer(traceViewerServerBaseUrl) };
     clientIdToTraceUrls.set(clientId, data);
   }
+  return data;
+}
+
+async function loadTrace(traceUrl: string, traceFileName: string | null, client: any | undefined, limit: number | undefined, progress: (done: number, total: number) => undefined): Promise<TraceModel> {
+  await gc();
+  const clientId = client?.id ?? '';
+  const data = getTraceData(clientId, client, limit);
   data.traceUrls.add(traceUrl);
 
   const traceModel = new TraceModel();
   try {
     // Allow 10% to hop from sw to page.
     const [fetchProgress, unzipProgress] = splitProgress(progress, [0.5, 0.4, 0.1]);
-    const backend = traceUrl.endsWith('json') ? new FetchTraceModelBackend(traceUrl, data.traceViewerServer) : new ZipTraceModelBackend(traceUrl, data.traceViewerServer, fetchProgress);
+    const backend = backendForTraceUrl(traceUrl, data, fetchProgress);
     await traceModel.load(backend, unzipProgress);
   } catch (error: any) {
     // eslint-disable-next-line no-console
@@ -70,6 +77,18 @@ async function loadTrace(traceUrl: string, traceFileName: string | null, client:
   const snapshotServer = new SnapshotServer(traceModel.storage(), sha1 => traceModel.resourceForSha1(sha1));
   loadedTraces.set(traceUrl, { traceModel, snapshotServer });
   return traceModel;
+}
+
+async function loadTraceMetadata(traceUrl: string, client: any | undefined, limit: number | undefined) {
+  const clientId = client?.id ?? '';
+  const data = getTraceData(clientId, client, limit);
+
+  const backend = backendForTraceUrl(traceUrl, data, (_done: number, _total: number) => {});
+  return await backend.metadata();
+}
+
+function backendForTraceUrl(traceUrl: string, data: TraceEntry, fetchProgress: (done: number, total: number) => undefined): TraceModelBackend {
+  return traceUrl.endsWith('json') ? new FetchTraceModelBackend(traceUrl, data.traceViewerServer) : new ZipTraceModelBackend(traceUrl, data.traceViewerServer, fetchProgress);
 }
 
 // @ts-ignore
@@ -103,6 +122,14 @@ async function doFetch(event: FetchEvent): Promise<Response> {
     }
 
     const traceUrl = url.searchParams.get('trace');
+
+    if (relativePath === '/contexts/metadata') {
+      const metadata = await loadTraceMetadata(traceUrl!, client, undefined);
+      return new Response(JSON.stringify(metadata), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     if (relativePath === '/contexts') {
       try {

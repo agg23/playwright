@@ -35,6 +35,7 @@ export const TraceView: React.FC<{
   const [model, setModel] = React.useState<{ model: MultiTraceModel, isLive: boolean } | undefined>(undefined);
   const [counter, setCounter] = React.useState(0);
   const pollTimer = React.useRef<NodeJS.Timeout | null>(null);
+  const lastModelTimestamp = React.useRef<number | undefined>(undefined);
 
   const { outputDir } = React.useMemo(() => {
     const outputDir = item.testCase ? outputDirForTestCase(item.testCase) : undefined;
@@ -54,7 +55,10 @@ export const TraceView: React.FC<{
     // Test finished.
     const attachment = result && result.duration >= 0 && result.attachments.find(a => a.name === 'trace');
     if (attachment && attachment.path) {
-      loadSingleTraceFile(attachment.path).then(model => setModel({ model, isLive: false }));
+      loadSingleTraceFile(attachment.path, lastModelTimestamp).then(model => {
+        if (!!model)
+          setModel({ model, isLive: false });
+      });
       return;
     }
 
@@ -72,8 +76,9 @@ export const TraceView: React.FC<{
     // Start polling running test.
     pollTimer.current = setTimeout(async () => {
       try {
-        const model = await loadSingleTraceFile(traceLocation);
-        setModel({ model, isLive: true });
+        const model = await loadSingleTraceFile(traceLocation, lastModelTimestamp);
+        if (!!model)
+          setModel({ model, isLive: true });
       } catch {
         const model = new MultiTraceModel([]);
         model.errorDescriptors.push(...result.errors.flatMap(error => !!error.message ? [{ message: error.message }] : []));
@@ -110,10 +115,17 @@ const outputDirForTestCase = (testCase: reporterTypes.TestCase): string | undefi
   return undefined;
 };
 
-async function loadSingleTraceFile(url: string): Promise<MultiTraceModel> {
+async function loadSingleTraceFile(url: string, lastModelTimestamp: React.MutableRefObject<number | undefined>): Promise<MultiTraceModel | undefined> {
   const params = new URLSearchParams();
   params.set('trace', url);
   params.set('limit', '1');
+  const metadataResponse = await fetch(`contexts/metadata?${params.toString()}`);
+  const metadata = await metadataResponse.json() as { lastModifiedTime: number };
+
+  if (metadata.lastModifiedTime === lastModelTimestamp.current)
+    return undefined;
+  lastModelTimestamp.current = metadata.lastModifiedTime;
+
   const response = await fetch(`contexts?${params.toString()}`);
   const contextEntries = await response.json() as ContextEntry[];
   return new MultiTraceModel(contextEntries);

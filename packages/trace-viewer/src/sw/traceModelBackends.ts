@@ -24,17 +24,17 @@ const zipjs = zipImport as typeof zip;
 type Progress = (done: number, total: number) => undefined;
 
 export class ZipTraceModelBackend implements TraceModelBackend {
-  private _zipReader: zip.ZipReader<unknown>;
-  private _entriesPromise: Promise<Map<string, zip.Entry>>;
-  private _traceURL: string;
+  private _zipReader: zip.ZipReader<unknown> | undefined;
+  private _entriesPromise: Promise<Map<string, zip.Entry>> | undefined;
 
-  constructor(traceURL: string, server: TraceViewerServer, progress: Progress) {
-    this._traceURL = traceURL;
+  constructor(private _traceURL: string, private _server: TraceViewerServer, private _progress: Progress) {}
+
+  initializeTrace() {
     zipjs.configure({ baseURL: self.location.href } as any);
     this._zipReader = new zipjs.ZipReader(
-        new zipjs.HttpReader(formatUrl(traceURL, server), { mode: 'cors', preventHeadRequest: true } as any),
+        new zipjs.HttpReader(formatUrl(this._traceURL, this._server), { mode: 'cors', preventHeadRequest: true } as any),
         { useWebWorkers: false });
-    this._entriesPromise = this._zipReader.getEntries({ onprogress: progress }).then(entries => {
+    this._entriesPromise = this._zipReader.getEntries({ onprogress: this._progress }).then(entries => {
       const map = new Map<string, zip.Entry>();
       for (const entry of entries)
         map.set(entry.filename, entry);
@@ -50,18 +50,22 @@ export class ZipTraceModelBackend implements TraceModelBackend {
     return this._traceURL;
   }
 
+  async metadata(): Promise<{ lastModifiedTime: number; }> {
+    return this._server.metadata(this._traceURL);
+  }
+
   async entryNames(): Promise<string[]> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!!;
     return [...entries.keys()];
   }
 
   async hasEntry(entryName: string): Promise<boolean> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!!;
     return entries.has(entryName);
   }
 
   async readText(entryName: string): Promise<string | undefined> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!!;
     const entry = entries.get(entryName);
     if (!entry)
       return;
@@ -71,7 +75,7 @@ export class ZipTraceModelBackend implements TraceModelBackend {
   }
 
   async readBlob(entryName: string): Promise<Blob | undefined> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!!;
     const entry = entries.get(entryName);
     if (!entry)
       return;
@@ -82,14 +86,12 @@ export class ZipTraceModelBackend implements TraceModelBackend {
 }
 
 export class FetchTraceModelBackend implements TraceModelBackend {
-  private _entriesPromise: Promise<Map<string, string>>;
-  private _path: string;
-  private _server: TraceViewerServer;
+  private _entriesPromise: Promise<Map<string, string>> | undefined;
 
-  constructor(path: string, server: TraceViewerServer) {
-    this._path  = path;
-    this._server = server;
-    this._entriesPromise = server.readFile(path).then(async response => {
+  constructor(private _path: string, private _server: TraceViewerServer) {}
+
+  initializeTrace(): void {
+    this._entriesPromise = this._server.readFile(this._path).then(async response => {
       if (!response)
         throw new Error('File not found');
       const json = await response.json();
@@ -108,13 +110,17 @@ export class FetchTraceModelBackend implements TraceModelBackend {
     return this._path;
   }
 
+  async metadata(): Promise<{ lastModifiedTime: number; }> {
+    return this._server.metadata(this._path);
+  }
+
   async entryNames(): Promise<string[]> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!;
     return [...entries.keys()];
   }
 
   async hasEntry(entryName: string): Promise<boolean> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!;
     return entries.has(entryName);
   }
 
@@ -129,7 +135,7 @@ export class FetchTraceModelBackend implements TraceModelBackend {
   }
 
   private async _readEntry(entryName: string): Promise<Response | undefined> {
-    const entries = await this._entriesPromise;
+    const entries = await this._entriesPromise!;
     const fileName = entries.get(entryName);
     if (!fileName)
       return;
@@ -152,6 +158,19 @@ export class TraceViewerServer {
     const url = new URL('trace/file', this.baseUrl);
     url.searchParams.set('path', path);
     return url;
+  }
+
+  getMetadataURL(path: string): URL {
+    const url = new URL('trace/metadata', this.baseUrl);
+    url.searchParams.set('path', path);
+    return url;
+  }
+
+  async metadata(path: string): Promise<{ lastModifiedTime: number; }> {
+    const response = await fetch(this.getMetadataURL(path));
+    if (!response.ok)
+      throw new Error('Failed to fetch metadata');
+    return response.json();
   }
 
   async readFile(path: string): Promise<Response | undefined> {

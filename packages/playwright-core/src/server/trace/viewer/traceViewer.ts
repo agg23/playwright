@@ -76,11 +76,27 @@ export async function startTraceViewerServer(options?: TraceViewerServerOptions)
     }
     if (relativePath.endsWith('/stall.js'))
       return true;
+    if (relativePath.startsWith('/metadata')) {
+      try {
+        const filePath = url.searchParams.get('path')!;
+        const lastModifiedTime = lastTraceModifiedTime(filePath);
+        response.statusCode = 200;
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({
+          lastModifiedTime,
+        }));
+        return true;
+      } catch (e) {
+      }
+      response.statusCode = 404;
+      response.end();
+      return true;
+    }
     if (relativePath.startsWith('/file')) {
       try {
         const filePath = url.searchParams.get('path')!;
         if (fs.existsSync(filePath))
-          return server.serveFile(request, response, url.searchParams.get('path')!);
+          return server.serveFile(request, response, filePath);
 
         // If .json is requested, we'll synthesize it for zip-less operation.
         if (filePath.endsWith('.json')) {
@@ -269,4 +285,28 @@ function traceDescriptor(traceName: string) {
       result.entries.push({ name: 'resources/' + name, path: path.join(resourcesDir, name) });
   }
   return result;
+}
+
+function lastTraceModifiedTime(tracePath: string) {
+  if (fs.existsSync(tracePath)) {
+    const stats = fs.statSync(tracePath);
+    return stats.mtime.getTime();
+  }
+
+  let lastModifiedTime: number | undefined;
+  if (tracePath.endsWith('.json')) {
+    const traceName = tracePath.substring(0, tracePath.length - '.json'.length);
+    const traceDir = path.dirname(traceName);
+    const traceFile = path.basename(traceName);
+    for (const name of fs.readdirSync(traceDir)) {
+      if (name.startsWith(traceFile)) {
+        const stats = fs.statSync(path.join(traceDir, name));
+        const mtime = stats.mtime.getTime();
+        if (lastModifiedTime === undefined || mtime > lastModifiedTime)
+          lastModifiedTime = mtime;
+      }
+    }
+  }
+
+  return lastModifiedTime ?? Date.now();
 }

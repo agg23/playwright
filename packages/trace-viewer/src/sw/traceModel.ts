@@ -22,10 +22,12 @@ import { TraceModernizer } from './traceModernizer';
 import type { ContextEntry } from '../types/entries';
 
 export interface TraceModelBackend {
+  initializeTrace(): void;
   entryNames(): Promise<string[]>;
   hasEntry(entryName: string): Promise<boolean>;
   readText(entryName: string): Promise<string | undefined>;
   readBlob(entryName: string): Promise<Blob | undefined>;
+  metadata(): Promise<{ lastModifiedTime: number }>;
   isLive(): boolean;
   traceURL(): string;
 }
@@ -41,6 +43,7 @@ export class TraceModel {
 
   async load(backend: TraceModelBackend, unzipProgress: (done: number, total: number) => void) {
     this._backend = backend;
+    this._backend.initializeTrace();
 
     const ordinals: string[] = [];
     let hasSource = false;
